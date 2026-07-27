@@ -171,7 +171,14 @@ app.post('/api/customers', authenticateToken, async (req, res) => {
 app.get('/api/menu', async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT mi.*, c.category_name 
+            SELECT 
+                mi.item_id,
+                mi.item_name,
+                mi.price,
+                mi.description,
+                mi.availability,
+                mi.image_url,
+                c.category_name 
             FROM menu_item mi
             LEFT JOIN category c ON mi.category_id = c.category_id
             ORDER BY c.category_name, mi.item_name
@@ -181,7 +188,6 @@ app.get('/api/menu', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
 app.post('/api/menu', authenticateToken, checkRole([1, 4, 5]), async (req, res) => {
     try {
         const { item_name, category_id, price, description, availability } = req.body;
