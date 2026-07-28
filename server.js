@@ -44,6 +44,10 @@ pool.on('error', (err) => {
     console.error('❌ Database error:', err);
 });
 
+if (!process.env.DATABASE_URL) {
+    console.warn('⚠️  DATABASE_URL not set. Database connections will fail.');
+}
+
 // ============================================================================
 // JWT AUTHENTICATION MIDDLEWARE
 // ============================================================================
@@ -568,7 +572,7 @@ app.use((error, req, res, next) => {
 // START SERVER
 // ============================================================================
 
-if (process.env.NODE_ENV !== 'production') {
+if (!process.env.VERCEL) {
     app.listen(PORT, () => {
         console.log(`
 ╔════════════════════════════════════════════════╗
