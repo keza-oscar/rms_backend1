@@ -271,7 +271,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
 app.post('/api/orders', async (req, res) => {
     const client = await pool.connect();
     try {
-        const { customer_id, staff_id, table_id, items, customer_name, customer_email, customer_phone, delivery_address, total_amount, payment_method, status } = req.body;
+        const { customer_id, staff_id, table_id, items, customer_name, customer_email, customer_phone, delivery_address, total_amount, payment_method, payment_category, status } = req.body;
 
         await client.query('BEGIN');
 
