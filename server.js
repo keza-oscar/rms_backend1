@@ -6,6 +6,7 @@
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 require('dotenv').config();
 
@@ -122,7 +123,8 @@ app.post('/api/auth/login', async (req, res) => {
 
         const user = result.rows[0];
 
-        if (password !== user.password) {
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
