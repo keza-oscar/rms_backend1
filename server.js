@@ -15,7 +15,14 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: function (origin, callback) {
+        const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000').split(',').map(s => s.trim());
+        if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+            callback(null, true);
+        } else {
+            callback(null, true);
+        }
+    },
     credentials: true
 }));
 app.use(express.json());
@@ -26,6 +33,7 @@ app.use(express.urlencoded({ extended: true }));
 // ============================================================================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 
 pool.on('connect', () => {
@@ -247,34 +255,63 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/orders', authenticateToken, async (req, res) => {
+app.post('/api/orders', async (req, res) => {
     const client = await pool.connect();
     try {
-        const { customer_id, staff_id, table_id, items } = req.body;
+        const { customer_id, staff_id, table_id, items, customer_name, customer_email, customer_phone, delivery_address, total_amount, payment_method, status } = req.body;
 
         await client.query('BEGIN');
 
+        let finalCustomerId = customer_id || null;
+
+        if (customer_name && !customer_id) {
+            const nameParts = customer_name.split(' ');
+            const firstName = nameParts[0] || customer_name;
+            const lastName = nameParts.slice(1).join(' ') || '';
+            const existingCustomer = await client.query(
+                'SELECT customer_id FROM customer WHERE email = $1 OR (first_name = $2 AND last_name = $3) LIMIT 1',
+                [customer_email, firstName, lastName]
+            );
+            if (existingCustomer.rows.length > 0) {
+                finalCustomerId = existingCustomer.rows[0].customer_id;
+            } else {
+                const newCustomer = await client.query(
+                    'INSERT INTO customer (first_name, last_name, phone, email) VALUES ($1, $2, $3, $4) RETURNING customer_id',
+                    [firstName, lastName, customer_phone || '', customer_email || '']
+                );
+                finalCustomerId = newCustomer.rows[0].customer_id;
+            }
+        }
+
         const orderResult = await client.query(
             'INSERT INTO orders (customer_id, staff_id, table_id, order_date, status) VALUES ($1, $2, $3, NOW(), $4) RETURNING order_id',
-            [customer_id || null, staff_id || 1, table_id || null, 'Pending']
+            [finalCustomerId, staff_id || 1, table_id || null, status || 'Pending']
         );
 
         const order_id = orderResult.rows[0].order_id;
 
         if (items && Array.isArray(items) && items.length > 0) {
             for (const item of items) {
+                const subtotal = item.subtotal || (item.price || 0) * (item.quantity || 1);
                 await client.query(
                     'INSERT INTO order_detail (order_id, item_id, quantity, subtotal) VALUES ($1, $2, $3, $4)',
-                    [order_id, item.item_id, item.quantity, item.subtotal || 0]
+                    [order_id, item.item_id, item.quantity || 1, subtotal]
                 );
             }
+        }
+
+        if (payment_method) {
+            await client.query(
+                'INSERT INTO payment (order_id, amount, payment_method, payment_status) VALUES ($1, $2, $3, $4)',
+                [order_id, total_amount || 0, payment_method, 'Completed']
+            );
         }
 
         await client.query('COMMIT');
 
         res.status(201).json({
             order_id,
-            status: 'Pending',
+            status: status || 'Pending',
             message: 'Order created successfully'
         });
     } catch (error) {
@@ -298,6 +335,21 @@ app.put('/api/orders/:id/status', authenticateToken, async (req, res) => {
         res.json(result.rows[0]);
     } catch (error) {
         res.status(400).json({ error: error.message });
+    }
+});
+
+app.get('/api/orders/:id', async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM orders WHERE order_id = $1',
+            [req.params.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -473,6 +525,33 @@ app.get('/api/tables', authenticateToken, async (req, res) => {
 });
 
 // ============================================================================
+// RESERVATIONS ENDPOINTS
+// ============================================================================
+
+app.get('/api/reservations', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM reservations ORDER BY reservation_date DESC');
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/reservations', async (req, res) => {
+    try {
+        const { name, email, phone, date, time, guests, specialRequests } = req.body;
+        const result = await pool.query(
+            `INSERT INTO reservations (customer_name, email, phone, reservation_date, reservation_time, number_of_guests, special_requests, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'Confirmed') RETURNING *`,
+            [name, email, phone, date, time, guests, specialRequests || '']
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ============================================================================
 // ERROR HANDLING
 // ============================================================================
 
@@ -489,8 +568,9 @@ app.use((error, req, res, next) => {
 // START SERVER
 // ============================================================================
 
-app.listen(PORT, () => {
-    console.log(`
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => {
+        console.log(`
 ╔════════════════════════════════════════════════╗
 ║     RESTAURANT MANAGEMENT SYSTEM (RMS)         ║
 ║            Group 8 - DIT Backend               ║
@@ -501,7 +581,8 @@ app.listen(PORT, () => {
 ✓ API URL: http://localhost:${PORT}/api
 
 Ready for demo! 🚀
-    `);
-});
+        `);
+    });
+}
 
 module.exports = app;
