@@ -556,6 +556,32 @@ app.post('/api/reservations', async (req, res) => {
 });
 
 // ============================================================================
+// REVIEWS ENDPOINTS
+// ============================================================================
+
+app.get('/api/reviews', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM reviews ORDER BY created_at DESC');
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/reviews', async (req, res) => {
+    try {
+        const { customer_name, rating, comment } = req.body;
+        const result = await pool.query(
+            'INSERT INTO reviews (customer_name, rating, comment) VALUES ($1, $2, $3) RETURNING *',
+            [customer_name, rating, comment]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ============================================================================
 // ERROR HANDLING
 // ============================================================================
 
